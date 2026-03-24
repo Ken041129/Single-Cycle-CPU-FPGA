@@ -98,27 +98,75 @@ forward:
 
    addi $t4, $t4, 4 
 
-   lw $s0, 0x7FF4($0)
+   lw $s0, 0x7FF4($0)  # 讀取開關數值
    
-   addi $t7, $0, 1
+   addi $t7, $0, 1  # 設速度 = 1
    beq $s0, $0, set_done
    
    addi $t1, $0, 1
-   addi $t7, $0, 2
+   addi $t7, $0, 2  # 若 SW==1，設速度 = 2
    beq $s0, $t1, set_done
    
    addi $t1, $0, 2
-   addi $t7, $0, 4
+   addi $t7, $0, 4  # 設速度 = 4
    beq $s0, $t1, set_done
-   
-   addi $t7, $0, 8
+
+   # 如果上面都沒有beq，代表開關值一定是 3
+   addi $t7, $0, 8  # 設速度 = 8
 set_done:
 
-   addi $t2, $0, 0
+   addi $t2, $0, 0  # clear $t2 counter
 
 wait:
-   slt $t1, $t2, $t3     
+   slt $t1, $t2, $t3  #(If $t2 < $t3, then $t1 = 1, else $t1 = 0)
    beq $t1, $0, forward  
    add $t2, $t2, $t7     
    j wait
 ```
+將修改完後的 snake_patterns.asm 用 MARS 組譯:  
+* 在 MARS 中寫好程式後，點擊上方的 Run -> Assemble 完成組譯。  
+* 點選選單列的 File -> Dump Memory...。  
+* 在跳出的視窗中，Memory Segment 選擇 .text; Dump Format 選擇 Hexadecimal Text。
+* 點擊 Dump To File... 並將檔案命名為 insmem_h.txt。
+* 確保 insmem_h.txt 剛好有 64 行 ( 補0或刪掉多餘的 )。
+* 再點選Dump Memory。
+* Memory Segment 改選 .data; Dump Format 一樣選 Hexadecimal Text。
+* Dump To File... 將檔案命名為 datamem_h.txt。
+* 一樣確保 datamem_h.txt 剛好有 64 行。
+* 將處理好的兩個 .txt 檔案覆蓋 Vivado 專案資料夾中原本提供的舊檔案。
+## 5. Vivado
+較新版本的 Vivado 不支援 .ngc 格式，並移除了 ngc2edif 轉換工具。新版 Vivado 合成器可把標準語法推導並合成為 FPGA 內部的記憶體。
+1. 從 Vivado 的 Sources 視窗中 Remove reg_half.v 和 reg_half.ngc 這兩個原本提供的檔案。  
+2. 改寫 RegisterFile.v (直接覆蓋原檔):
+```verilog
+`timescale 1ns / 1ps
+
+module RegisterFile(
+         input   [4:0] A1,   // selects one of 32 registers
+         output [31:0] RD1,  // register corresponding to A1
+         input   [4:0] A2,   // selects one of 32 registers
+         output [31:0] RD2,  // register corresponding to A2
+         input   [4:0] A3,   // selects the address for writeback
+         input  [31:0] WD3,  // Write-back data, will be written to addess A3
+         input         WE3,  // Write-enable for third port WE3=1 write WD3 to A3
+         input         CLK   // System clock
+    );
+
+    // 宣告 32 個 32-bit 的暫存器陣列 (MIPS 標準架構)
+    reg [31:0] rf [31:0];
+
+    // 在 Clock 正緣時且 WE3 為 1 時寫入
+    // 加上 (A3 != 5'b00000) 確保 MIPS 的 $0 暫存器永遠保持為 0，不可被覆寫
+    always @(posedge CLK) begin
+        if (WE3 && (A3 != 5'b00000)) begin
+            rf[A3] <= WD3;
+        end
+    end
+
+    // 非同步讀取。如果讀取的是暫存器 0 (4'b0000)，直接輸出 0
+    assign RD1 = (A1 != 5'b00000) ? rf[A1] : 32'h00000000;
+    assign RD2 = (A2 != 5'b00000) ? rf[A2] : 32'h00000000;
+
+endmodule
+```
+跑 Synthesis -> Implementation -> Bitstream -> open hardware manager
